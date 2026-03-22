@@ -248,7 +248,8 @@ def read_all_memories() -> dict:
     memories = []
     for r in rows:
         memories.append({
-            "id": r["id"], "source": r["source"], "summary": r["summary"],
+            "id": r["id"], "source": r["source"], "raw_text": r["raw_text"],
+            "summary": r["summary"],
             "entities": json.loads(r["entities"]), "topics": json.loads(r["topics"]),
             "importance": r["importance"], "connections": json.loads(r["connections"]),
             "created_at": r["created_at"], "consolidated": bool(r["consolidated"]),
@@ -620,7 +621,10 @@ async def watch_folder(agent: MemoryAgent, folder: Path, poll_interval: int = 5)
 
                 try:
                     if suffix in TEXT_EXTENSIONS:
-                        raw = f.read_text(encoding="utf-8", errors="replace")[:12000]
+                        raw_full = f.read_text(encoding="utf-8", errors="replace")
+                        raw = raw_full[:12000]
+                        if len(raw_full) > 12000:
+                            log.warning(f"TRUNCATE {f.name}: {len(raw_full)} chars → 12,000 (content beyond limit dropped)")
                         if not raw.strip():
                             log.warning(f"SKIP {f.name} — empty file")
                         else:
@@ -629,7 +633,7 @@ async def watch_folder(agent: MemoryAgent, folder: Path, poll_interval: int = 5)
                             )
                             log.info(f"INGEST [{file_type}] {f.name}")
                             prompt = build_text_ingest_prompt(raw, f.name)
-                            await agent.ingest(prompt, source=f.name)
+                            await agent.ingest(prompt)
                     else:
                         await agent.ingest_file(f)
                 except Exception as file_err:
@@ -690,7 +694,8 @@ def build_http(agent: MemoryAgent, watch_path: str = "./inbox"):
         if not text:
             return web.json_response({"error": "missing 'text' field"}, status=400)
         source = data.get("source", "api")
-        result = await agent.ingest(text, source=source)
+        framed = build_text_ingest_prompt(text, source)
+        result = await agent.ingest(framed)
         return web.json_response({"status": "ingested", "response": result})
 
     async def handle_consolidate(request: web.Request):

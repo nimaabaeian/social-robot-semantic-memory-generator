@@ -172,10 +172,12 @@ Environment variables:
 | `/status` | GET | — | Memory counts (total, unconsolidated, consolidations) |
 | `/memories` | GET | — | All stored memories, most recent first (limit 50) |
 | `/query` | GET | `?q=<question>` | Natural language query over memories |
-| `/ingest` | POST | `{"text": "...", "source": "..."}` | Ingest a text snippet directly |
+| `/ingest` | POST | `{"text": "...", "source": "..."}` | Ingest a text snippet directly (see note below) |
 | `/consolidate` | POST | — | Trigger consolidation immediately |
 | `/delete` | POST | `{"memory_id": <int>}` | Delete one memory by ID |
-| `/clear` | POST | — | Delete all memories, consolidations, and inbox records |
+| `/clear` | POST | — | Delete all memories, consolidations, processed-file records, **and all files in the inbox folder** |
+
+> **`/ingest` vs inbox drop:** Text sent via the `/ingest` API is passed to the agent as-is and does not go through the type-aware framing layer. JSON posted to `/ingest` will be treated as plain text, not as structured episode data. If you want JSON episode files parsed with social-context framing, drop them in `./inbox/` instead of posting them to the API.
 
 ## Project Structure
 
@@ -207,6 +209,7 @@ Each consolidation produces one record with a synthesized summary, one actionabl
 - **Memory generation only.** This agent ingests episode files and builds memories. It does not control robot behavior, publish to any robot middleware, or manage robot state.
 - **No vector search.** Retrieval is full-table SQL. Works well at the scale of a single robot's interaction history; not designed for large multi-robot deployments.
 - **20 MB inline media limit.** Imposed by Gemini's inline byte API. Large audio/video files must be trimmed before being dropped in inbox.
+- **12,000 character text cap.** Text files read from inbox are truncated to 12,000 characters before being sent to the LLM. Content beyond that limit is silently dropped.
 - **No deduplication.** The same file dropped twice will be ingested once (tracked by path in `processed_files`), but semantically duplicate content from different filenames will produce separate memory entries.
 - **Platform-agnostic.** The agent assumes the robot delivers episode files to `./inbox/`. Integration with any specific robot platform (ROS, NAOqi, etc.) is out of scope.
 

@@ -32,41 +32,49 @@ UPLOAD_EXTENSIONS = [
 
 SAMPLE_TEXTS = [
     {
-        "title": "📰 AI Agents in Production",
+        "title": "👋 First Meeting — Alex",
         "text": (
-            "Anthropic released a report showing that 62% of Claude usage is now "
-            "code-related, with AI agents being the fastest growing category. "
-            "Companies are deploying agents for customer support, code review, "
-            "and data analysis. The key challenge remains reliability: agents "
-            "fail silently and need human oversight loops."
+            "Interaction transcript — 2024-03-10 09:15\n"
+            "Robot greeted a new visitor named Alex Chen at the lab entrance. "
+            "Alex introduced himself as a PhD student in HRI. He mentioned he "
+            "dislikes when robots speak too fast and prefers concise answers. "
+            "He seemed curious and engaged throughout the 4-minute interaction. "
+            "At the end he said he would be visiting regularly on Tuesday mornings."
         ),
     },
     {
-        "title": "📧 Meeting Notes: Q1 Planning",
+        "title": "☕ Preference — Maria's Coffee Order",
         "text": (
-            "Discussed Q1 priorities: 1) Ship the new API by March 15, "
-            "2) Hire two backend engineers, 3) Reduce inference costs by 40% "
-            "by switching to smaller models for routing tasks. Sarah will lead "
-            "the API project. Budget approved for $50k in cloud compute."
+            "Interaction transcript — 2024-03-12 08:45\n"
+            "Maria Rossi stopped by the robot station before her morning shift. "
+            "She asked the robot to remind her about the team standup at 10am. "
+            "During the conversation she mentioned she always drinks oat milk latte "
+            "and never touches regular coffee. She also said she finds background "
+            "music distracting and would prefer a quieter lab environment."
         ),
     },
     {
-        "title": "📄 Research: Memory in LLM Systems",
+        "title": "😟 Emotional Support — Jordan",
         "text": (
-            "Current approaches to LLM memory: 1) Vector databases with RAG: "
-            "good for retrieval but no active processing. 2) Conversation "
-            "summarization: loses detail over time. 3) Knowledge graphs: "
-            "expensive to maintain. The gap: no system actively consolidates "
-            "and connects information like human memory does."
+            "Interaction transcript — 2024-03-13 14:30\n"
+            "Jordan Walker approached the robot looking visibly tired. They said "
+            "the experiment had not gone well and they were feeling discouraged. "
+            "The robot offered brief words of encouragement. Jordan responded "
+            "positively to the support and mentioned that direct reassurance "
+            "helps them more than problem-solving talk when they are stressed. "
+            "Jordan stayed for 7 minutes before returning to their desk."
         ),
     },
     {
-        "title": "💡 Product Idea: Smart Inbox",
+        "title": "🎯 Task Request — Dr. Patel",
         "text": (
-            "What if email had an AI layer that continuously reads, categorizes, "
-            "and summarizes incoming mail? Not just filtering: actually understanding "
-            "context across conversations. Competitors: Superhuman (fast UI, no AI "
-            "summary), Shortwave (some AI, limited memory)."
+            "Interaction transcript — 2024-03-14 11:00\n"
+            "Dr. Priya Patel asked the robot to locate the calibration report "
+            "from last Thursday and summarise the key results. She spoke quickly "
+            "and used technical shorthand, suggesting high familiarity with the "
+            "domain. She thanked the robot briefly and left within 2 minutes. "
+            "This is a typical interaction pattern for Dr. Patel: task-focused, "
+            "efficient, little small talk."
         ),
     },
 ]
