@@ -80,9 +80,9 @@ SAMPLE_TEXTS = [
 ]
 
 
-def api_get(path: str) -> dict | None:
+def api_get(path: str, params: dict | None = None) -> dict | None:
     try:
-        r = requests.get(f"{AGENT_URL}{path}", timeout=30)
+        r = requests.get(f"{AGENT_URL}{path}", params=params, timeout=30)
         return r.json()
     except Exception as e:
         st.error(f"Agent not reachable: {e}")
@@ -156,6 +156,7 @@ def main():
             with col2:
                 st.markdown(f'<div class="stat-card"><div class="stat-number">{stats.get("unconsolidated", 0)}</div><div class="stat-label">Pending</div></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="stat-card" style="margin-top:8px;"><div class="stat-number">{stats.get("consolidations", 0)}</div><div class="stat-label">Consolidations</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="stat-card" style="margin-top:8px;"><div class="stat-number" style="color:#4ade80;">{stats.get("facts", 0)}</div><div class="stat-label">Semantic Facts</div></div>', unsafe_allow_html=True)
         else:
             st.markdown(f'<div class="stat-card" style="margin-bottom:8px;"><div class="stat-number" style="color:#ef4444;">●</div><div class="stat-label">Agent Offline</div></div>', unsafe_allow_html=True)
             st.info("Start the agent:\n```\npython agent.py\n```")
@@ -185,7 +186,7 @@ def main():
         unsafe_allow_html=True,
     )
 
-    tab_ingest, tab_query, tab_memories = st.tabs(["📥 Ingest", "🔍 Query", "🧠 Memory Bank"])
+    tab_ingest, tab_query, tab_memories, tab_facts = st.tabs(["📥 Ingest", "🔍 Query", "🧠 Memory Bank", "💡 Semantic Facts"])
 
     with tab_ingest:
         st.markdown("#### Feed information into memory")
@@ -284,7 +285,7 @@ def main():
         if question:
             with st.spinner("QueryAgent searching memory..."):
                 t0 = time.time()
-                result = api_get(f"/query?q={question}")
+                result = api_get("/query", params={"q": question})
                 elapsed = time.time() - t0
             if result:
                 st.markdown(
@@ -325,6 +326,45 @@ def main():
                         st.rerun()
         else:
             st.info("No memories yet. Ingest some information or drop files in ./inbox")
+
+    with tab_facts:
+        st.markdown("#### Semantic Facts")
+        st.markdown(
+            "<p style='color: #666; font-size: 13px;'>Atemporal facts extracted from episodes. "
+            "Each observation of the same fact increases its confidence toward 1.0.</p>",
+            unsafe_allow_html=True,
+        )
+
+        entity_filter = st.text_input("Filter by entity name", placeholder="e.g. Alex Chen", label_visibility="visible")
+        data = api_get("/facts", params={"entity": entity_filter} if entity_filter else None)
+
+        if data and data.get("facts"):
+            # Group by entity
+            by_entity: dict = {}
+            for f in data["facts"]:
+                by_entity.setdefault(f["entity"], []).append(f)
+
+            for entity_name, facts in sorted(by_entity.items()):
+                st.markdown(f"**{entity_name}**")
+                for f in facts:
+                    conf = f["confidence"]
+                    bar_color = "#4ade80" if conf >= 0.8 else "#fbbf24" if conf >= 0.5 else "#6b7280"
+                    n = f["evidence_count"]
+                    st.markdown(
+                        f"""<div style="display:flex; align-items:center; gap:12px;
+                            padding: 6px 12px; margin: 3px 0;
+                            background: rgba(255,255,255,0.02); border-radius: 6px;">
+                            <span style="color:#a78bfa; font-size:12px; width:180px; flex-shrink:0;">
+                                {f['attribute']}</span>
+                            <span style="color:#e8e8e8; font-size:13px; flex:1;">{f['value']}</span>
+                            <span style="color:{bar_color}; font-size:11px; width:80px; text-align:right;">
+                                {conf:.0%} · {n}×</span>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+                st.markdown("")
+        else:
+            st.info("No semantic facts yet. Facts are extracted automatically after each episode is ingested.")
 
 
 if __name__ == "__main__":

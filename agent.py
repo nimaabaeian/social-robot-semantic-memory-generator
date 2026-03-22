@@ -22,8 +22,6 @@ import os
 import shutil
 import signal
 import sqlite3
-import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -195,6 +193,18 @@ def get_db() -> sqlite3.Connection:
             path TEXT PRIMARY KEY,
             processed_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity TEXT NOT NULL,
+            attribute TEXT NOT NULL,
+            value TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            evidence_count INTEGER NOT NULL DEFAULT 1,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            source_memory_ids TEXT NOT NULL DEFAULT '[]',
+            UNIQUE(entity, attribute)
+        );
     """)
     return db
 
@@ -343,11 +353,13 @@ def get_memory_stats() -> dict:
     total = db.execute("SELECT COUNT(*) as c FROM memories").fetchone()["c"]
     unconsolidated = db.execute("SELECT COUNT(*) as c FROM memories WHERE consolidated = 0").fetchone()["c"]
     consolidations = db.execute("SELECT COUNT(*) as c FROM consolidations").fetchone()["c"]
+    facts = db.execute("SELECT COUNT(*) as c FROM facts").fetchone()["c"]
     db.close()
     return {
         "total_memories": total,
         "unconsolidated": unconsolidated,
         "consolidations": consolidations,
+        "facts": facts,
     }
 
 
@@ -379,6 +391,7 @@ def clear_all_memories(inbox_path: str | None = None) -> dict:
     db.execute("DELETE FROM memories")
     db.execute("DELETE FROM consolidations")
     db.execute("DELETE FROM processed_files")
+    db.execute("DELETE FROM facts")
     db.commit()
     db.close()
 
@@ -402,6 +415,92 @@ def clear_all_memories(inbox_path: str | None = None) -> dict:
 
     log.info(f"CLEAR all {mem_count} memories, {files_deleted} inbox files deleted")
     return {"status": "cleared", "memories_deleted": mem_count, "files_deleted": files_deleted}
+
+
+def upsert_fact(entity: str, attribute: str, value: str, memory_id: int = 0) -> dict:
+    """Insert a new semantic fact or strengthen an existing one.
+
+    Each time the same (entity, attribute) is observed again, confidence increases
+    toward 1.0 and evidence_count increments. The value is updated to the latest
+    observation.
+
+    Args:
+        entity: The person, place, or thing this fact is about (use full name).
+        attribute: Snake_case key for the aspect being described
+                   (e.g. preferred_speech_speed, coffee_preference, visit_pattern).
+        value: The observed value as a concise string.
+        memory_id: ID of the source memory (0 if unknown).
+
+    Returns:
+        dict with status ('created' or 'strengthened'), entity, attribute, confidence,
+        and evidence_count.
+    """
+    db = get_db()
+    now = datetime.now(timezone.utc).isoformat()
+    row = db.execute(
+        "SELECT * FROM facts WHERE entity = ? AND attribute = ?", (entity, attribute)
+    ).fetchone()
+
+    if row:
+        new_confidence = min(1.0, row["confidence"] + (1.0 - row["confidence"]) * 0.35)
+        new_count = row["evidence_count"] + 1
+        ids = json.loads(row["source_memory_ids"])
+        if memory_id and memory_id not in ids:
+            ids.append(memory_id)
+        db.execute(
+            """UPDATE facts SET value = ?, confidence = ?, evidence_count = ?,
+               last_seen = ?, source_memory_ids = ? WHERE entity = ? AND attribute = ?""",
+            (value, new_confidence, new_count, now, json.dumps(ids), entity, attribute),
+        )
+        db.commit()
+        db.close()
+        log.info(f"FACT strengthened [{entity}] {attribute}={value!r} (confidence={new_confidence:.2f}, n={new_count})")
+        return {"status": "strengthened", "entity": entity, "attribute": attribute,
+                "value": value, "confidence": new_confidence, "evidence_count": new_count}
+    else:
+        ids = [memory_id] if memory_id else []
+        db.execute(
+            """INSERT INTO facts (entity, attribute, value, confidence, evidence_count,
+               first_seen, last_seen, source_memory_ids) VALUES (?, ?, ?, 0.5, 1, ?, ?, ?)""",
+            (entity, attribute, value, now, now, json.dumps(ids)),
+        )
+        db.commit()
+        db.close()
+        log.info(f"FACT created [{entity}] {attribute}={value!r} (confidence=0.50)")
+        return {"status": "created", "entity": entity, "attribute": attribute,
+                "value": value, "confidence": 0.5, "evidence_count": 1}
+
+
+def read_facts(entity: str = "") -> dict:
+    """Read semantic facts from the database, optionally filtered by entity.
+
+    Args:
+        entity: Filter by entity name (partial, case-insensitive). Empty returns all.
+
+    Returns:
+        dict with list of facts sorted by confidence descending.
+    """
+    db = get_db()
+    if entity:
+        rows = db.execute(
+            "SELECT * FROM facts WHERE entity LIKE ? ORDER BY confidence DESC LIMIT 100",
+            (f"%{entity}%",),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM facts ORDER BY confidence DESC LIMIT 100"
+        ).fetchall()
+    facts = [
+        {
+            "id": r["id"], "entity": r["entity"], "attribute": r["attribute"],
+            "value": r["value"], "confidence": r["confidence"],
+            "evidence_count": r["evidence_count"],
+            "first_seen": r["first_seen"], "last_seen": r["last_seen"],
+        }
+        for r in rows
+    ]
+    db.close()
+    return {"facts": facts, "count": len(facts)}
 
 
 # ─── ADK Agents ────────────────────────────────────────────────
@@ -446,6 +545,40 @@ def build_agents():
         tools=[store_memory],
     )
 
+    fact_extractor_agent = Agent(
+        name="fact_extractor_agent",
+        model=MODEL,
+        description="Extracts atemporal semantic facts from a freshly ingested episode memory.",
+        instruction=(
+            "You are a Semantic Fact Extractor for a social robot.\n"
+            "You receive the content of a social interaction episode that was just stored.\n"
+            "Your job is to extract only facts that are ATEMPORAL — things that will remain\n"
+            "true beyond this specific episode and are useful for future interactions.\n\n"
+            "A semantic fact has three parts:\n"
+            "  entity    — the specific named person, place, or thing (use full name if known)\n"
+            "  attribute — a short snake_case descriptor of what this fact is about,\n"
+            "              e.g. preferred_speech_speed, coffee_preference, visit_pattern,\n"
+            "                   communication_style, role, typical_mood, disliked_topics\n"
+            "  value     — the observed value as a concise string\n\n"
+            "Only extract facts that are:\n"
+            "  • About a SPECIFIC named entity (not 'the user' or 'a person')\n"
+            "  • Likely to be STABLE or REPEATING across future interactions\n"
+            "  • Expressed or clearly demonstrated (not inferred from a single ambiguous cue)\n"
+            "  • Useful for the robot to remember (preferences, habits, communication style,\n"
+            "    role, relationship to the robot, recurring patterns)\n\n"
+            "Do NOT extract:\n"
+            "  • One-off events ('asked for weather today', 'arrived late on Tuesday')\n"
+            "  • Timestamps, dates, or episode-specific details\n"
+            "  • Vague or low-confidence observations\n"
+            "  • Facts about the robot itself\n\n"
+            "For each fact you identify, call upsert_fact(entity, attribute, value, memory_id).\n"
+            "Pass memory_id=0 if the episode memory ID is not available.\n"
+            "If no durable facts can be extracted, respond: 'No durable facts in this episode.'\n"
+            "After calling upsert_fact for each fact, briefly list what was stored."
+        ),
+        tools=[upsert_fact],
+    )
+
     consolidate_agent = Agent(
         name="consolidate_agent",
         model=MODEL,
@@ -483,14 +616,17 @@ def build_agents():
         description="Answers questions using stored memories.",
         instruction=(
             "You are a Memory Query Agent. When asked a question:\n"
-            "1. Call read_all_memories to access the memory store\n"
-            "2. Call read_consolidation_history for higher-level insights\n"
-            "3. Synthesize an answer based ONLY on stored memories\n"
-            "4. Reference memory IDs: [Memory 1], [Memory 2], etc.\n"
-            "5. If no relevant memories exist, say so honestly\n\n"
+            "1. Call read_facts to retrieve atemporal semantic facts (what is persistently known about people)\n"
+            "2. Call read_all_memories to access the full episodic memory store\n"
+            "3. Call read_consolidation_history for cross-episode insights\n"
+            "4. Synthesize an answer drawing from all three sources\n"
+            "5. Prefer facts for stable truths ('Alex prefers short responses');\n"
+            "   use memories for context, events, and specifics\n"
+            "6. Cite sources: [Fact: entity/attribute], [Memory N], [Consolidation N]\n"
+            "7. If no relevant data exists, say so honestly\n\n"
             "Be thorough but concise. Always cite sources."
         ),
-        tools=[read_all_memories, read_consolidation_history],
+        tools=[read_all_memories, read_consolidation_history, read_facts],
     )
 
     orchestrator = Agent(
@@ -500,13 +636,17 @@ def build_agents():
         instruction=(
             "You are the Memory Orchestrator for an always-on memory system.\n"
             "Route requests to the right sub-agent:\n"
-            "- New information -> ingest_agent\n"
-            "- Consolidation request -> consolidate_agent\n"
-            "- Questions -> query_agent\n"
-            "- Status check -> call get_memory_stats and report\n\n"
-            "After the sub-agent completes, give a brief summary."
+            "- New information → ALWAYS run BOTH steps in order:\n"
+            "  1. ingest_agent — stores the episode and returns a summary + memory_id\n"
+            "  2. fact_extractor_agent — pass it the text summary/description that\n"
+            "     ingest_agent produced (not raw media bytes); it will extract durable facts\n"
+            "- Consolidation request → consolidate_agent\n"
+            "- Questions → query_agent\n"
+            "- Status check → call get_memory_stats and report\n\n"
+            "Never skip fact_extractor_agent after an ingest. It runs on every episode.\n"
+            "After both steps complete, give a one-sentence summary of what was stored."
         ),
-        sub_agents=[ingest_agent, consolidate_agent, query_agent],
+        sub_agents=[ingest_agent, fact_extractor_agent, consolidate_agent, query_agent],
         tools=[get_memory_stats],
     )
 
@@ -721,6 +861,11 @@ def build_http(agent: MemoryAgent, watch_path: str = "./inbox"):
         result = delete_memory(int(memory_id))
         return web.json_response(result)
 
+    async def handle_facts(request: web.Request):
+        entity = request.query.get("entity", "").strip()
+        data = read_facts(entity=entity)
+        return web.json_response(data)
+
     async def handle_clear(request: web.Request):
         result = clear_all_memories(inbox_path=watch_path)
         return web.json_response(result)
@@ -730,6 +875,7 @@ def build_http(agent: MemoryAgent, watch_path: str = "./inbox"):
     app.router.add_post("/consolidate", handle_consolidate)
     app.router.add_get("/status", handle_status)
     app.router.add_get("/memories", handle_memories)
+    app.router.add_get("/facts", handle_facts)
     app.router.add_post("/delete", handle_delete)
     app.router.add_post("/clear", handle_clear)
 
