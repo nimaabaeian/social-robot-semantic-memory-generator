@@ -16,10 +16,10 @@ Social robots accumulate rich interaction data — structured episode logs, conv
 
 ```
 inbox/
-  episode_001.json   ──► [ingest_agent]        ──► memories table (SQLite)
-  session_02.txt     ──►  Gemini LLM                │
-  audio_03.mp3       ──►  multimodal                ▼
-  video_04.mp4       ──►            [fact_extractor_agent] ──► facts table
+  memory.json   ──► [ingest_agent]        ──► memories table (SQLite)
+  transcript.txt     ──►  Gemini LLM                │
+  audio.mp3       ──►  multimodal                ▼
+  video.mp4       ──►            [fact_extractor_agent] ──► facts table
                                                     │         (entity · attribute · value
                                                     │          confidence · evidence_count)
                                     [consolidate_agent]  (every 30 min)
@@ -142,11 +142,10 @@ Default behavior:
 ### 4. Drop episode files into inbox
 
 ```bash
-cp episode_001.json inbox/
-cp session_02.txt   inbox/
-cp audio_03.mp3     inbox/
-cp video_04.mp4     inbox/
-# Each file is picked up, ingested, and fact-extracted within 5 seconds
+cp memory.json inbox/
+cp transcript.txt   inbox/
+cp audio.mp3     inbox/
+cp video.mp4     inbox/
 ```
 
 ### 5. Ingest text directly via API
